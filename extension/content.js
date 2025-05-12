@@ -1,48 +1,74 @@
-document.addEventListener('click', (event) => {
-  const popup = document.getElementById('brelock-popup');
-  const target = event.target;
-  
-  if (popup && !target.closest('#brelock-popup')) {
-    popup.remove();
-  }
+// API //
+const BASE_URL = 'https://askcfqmksmsgvvpmfhkt.supabase.co';
+const ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFza2NmcW1rc21zZ3Z2cG1maGt0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDYzODg3NzMsImV4cCI6MjA2MTk2NDc3M30.eUbOzB6kdrCb9gUUK3tcXmXzfhaxt-OeScMyGJ5UJzU';
 
-  if (target.matches('input[type="password"]')) {
-    event.stopPropagation();
-    createPopup(target, event);
+// Парсим сервис //
+function getServiceDomain() {
+  const host = window.location.hostname;
+  const parts = host.split('.');
+  return parts.length > 2
+    ? parts.slice(-2).join('.')
+    : host;
+}
+
+// GET запрос для user_id = 1 //
+async function fetchCredentialsFor(domain) {
+  try {
+    const url = new URL(`${BASE_URL}/rest/v1/passwords`);
+
+    url.searchParams.set('user_id', 'eq.1');
+    url.searchParams.set('name_service', `eq.${domain}`);
+    url.searchParams.set('select',
+      'id,' +
+      'service_name:name_service,' +
+      'icon_name:name_service_icon,' +
+      'login:user_login,' +
+      'encrypted_pass:encrypted_password'
+    );
+
+    const res = await fetch(url.toString(), {
+      method: 'GET',
+      headers: {
+        'apikey': ANON_KEY,
+        'Authorization': `Bearer ${ANON_KEY}`,
+        'Accept': 'application/json'
+      }
+    });
+
+    if (!res.ok) {
+      console.warn(`Ошибка GET-запроса для ${domain}:`, res.status, res.statusText);
+      return null;
+    }
+
+    const data = await res.json();
+    return Array.isArray(data) && data.length > 0 ? data[0] : null;
+  }
+  catch (err) {
+    console.error('Fetch error:', err);
+    return null;
+  }
+}
+
+// Функция вставки пароля //
+document.addEventListener('click', async (event) => {
+  const target = event.target;
+  if (target.matches('input[type="text"], input[type="email"], input[type="password"]')) {
+    const domain = getServiceDomain();
+    const creds = await fetchCredentialsFor(domain);
+    if (!creds) return;
+
+    const loginField = document.querySelector('input[type="text"], input[type="email"]');
+    if (loginField) {
+      loginField.value = creds.login;
+      loginField.dispatchEvent(new Event('input', { bubbles: true }));
+      loginField.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
+    const passwordField = document.querySelector('input[type="password"]');
+    if (passwordField) {
+      passwordField.value = creds.encrypted_pass;
+      passwordField.dispatchEvent(new Event('input', { bubbles: true }));
+      passwordField.dispatchEvent(new Event('change', { bubbles: true }));
+    }
   }
 });
-
-function createPopup(inputField, event) {
-  const existingPopup = document.getElementById('brelock-popup');
-  if (existingPopup) existingPopup.remove();
-
-  const popup = document.createElement('div');
-  popup.id = 'brelock-popup';
-  popup.textContent = 'Вставить пароль';
-
-  Object.assign(popup.style, {
-    position: 'absolute',
-    left: `${event.pageX}px`,       
-    top: `${event.pageY + 20}px`,
-    backgroundColor: '#fff',
-	color: '#ff0000',
-    border: '1px solid #ddd',
-    borderRadius: '4px',
-    padding: '8px 16px',
-    cursor: 'pointer',
-    zIndex: '2147483647',          
-    boxShadow: '0 2px 10px rgba(0,0,0,0.2)',
-    fontSize: '14px',
-    fontFamily: 'Arial, sans-serif'
-  });
-
-  popup.addEventListener('click', (e) => {
-    inputField.value = 'password)';
-    inputField.dispatchEvent(new Event('input', { bubbles: true }));
-    inputField.dispatchEvent(new Event('change', { bubbles: true }));
-    popup.remove();
-    e.stopPropagation(); 
-  }); 
-
-  document.body.appendChild(popup);
-} 
