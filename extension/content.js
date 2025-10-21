@@ -133,6 +133,55 @@ const ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsI
         document.head.appendChild(styleSheet);
     }
 
+    // === Валидация входных данных ===
+    function validateInput(input, fieldName = 'поле') {
+        if (typeof input !== 'string') {
+            throw new Error(`${fieldName} должно быть строкой`);
+        }
+
+        // Проверка длины
+        if (input.length > 500) {
+            throw new Error(`${fieldName} слишком длинное (макс. 500 символов)`);
+        }
+
+        if (input.length === 0) {
+            throw new Error(`${fieldName} не может быть пустым`);
+        }
+
+        // Запрещенные SQL-команды и опасные паттерны
+        const dangerousPatterns = [
+            /\bdrop\s+database\b/i,
+            /\bdelete\s+from\b/i,
+            /\bupdate\s+.+\s+set\b/i,
+            /\binsert\s+into\b/i,
+            /\bselect\s+.+\bfrom\b/i,
+            /\bunion\s+select\b/i,
+            /\bexec(\s|\()+/i,
+            /\bxp_/i,
+            /(\;|\-\-|\#)/, // SQL инъекции
+            /(\<\s*script)/i, // XSS
+            /javascript\:/i, // XSS
+            /on\w+\s*=/, // XSS события
+        ];
+
+        for (const pattern of dangerousPatterns) {
+            if (pattern.test(input)) {
+                throw new Error(`${fieldName} содержит запрещенные символы или команды`);
+            }
+        }
+
+        return input.trim();
+    }
+
+    function sanitizeLogin(login) {
+        return validateInput(login, 'Логин')
+            .replace(/[<>]/g, ''); // Дополнительная очистка для HTML
+    }
+
+    function sanitizePassword(password) {
+        return validateInput(password, 'Пароль');
+    }
+
     // Service Domain Parser
     function getServiceDomain() {
         const host = window.location.hostname;
@@ -204,8 +253,8 @@ const ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsI
         overlay.innerHTML = `
             <div id="auth-form-container">
                 <h3 style="margin:0 0 20px;text-align:center;">Менеджер паролей</h3>
-                <input type="email" id="auth-email" placeholder="Email" />
-                <input type="password" id="auth-master" placeholder="Мастер-пароль" />
+                <input type="email" id="auth-email" placeholder="Email" maxlength="100" />
+                <input type="password" id="auth-master" placeholder="Мастер-пароль" maxlength="100" />
                 <div class="auth-actions">
                     <button id="login-btn">Войти</button>
                     <button id="register-btn">Регистрация</button>
@@ -232,13 +281,18 @@ const ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsI
 
         errorEl.style.display = 'none';
 
-        if (!email || !master) {
-            errorEl.textContent = 'Заполните все поля';
-            errorEl.style.display = 'block';
-            return;
-        }
-
         try {
+            if (!email || !master) {
+                throw new Error('Заполните все поля');
+            }
+
+            if (!email.includes('@') || email.length < 3) {
+                throw new Error('Введите корректный email');
+            }
+
+            // Валидация мастер-пароля
+            validateInput(master, 'Мастер-пароль');
+
             const res = await fetch(`${BASE_URL}/rest/v1/rpc/get_hash_by_email`, {
                 method: 'POST',
                 headers: { 'apikey': ANON_KEY, 'Content-Type': 'application/json' },
@@ -282,13 +336,18 @@ const ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsI
 
         errorEl.style.display = 'none';
 
-        if (!email || !master) {
-            errorEl.textContent = 'Заполните все поля';
-            errorEl.style.display = 'block';
-            return;
-        }
-
         try {
+            if (!email || !master) {
+                throw new Error('Заполните все поля');
+            }
+
+            if (!email.includes('@') || email.length < 3) {
+                throw new Error('Введите корректный email');
+            }
+
+            // Валидация мастер-пароля
+            validateInput(master, 'Мастер-пароль');
+
             const keyPair = await crypto.subtle.generateKey(
                 { name: "RSA-OAEP", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
                 true,
@@ -412,12 +471,10 @@ const ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsI
                 return [];
             }
 
-            // ИСПРАВЛЕНИЕ: используем правильные названия полей из базы данных
             return data.map(item => {
-                // В базе данных пароль хранится в поле encrypted_pass, а не encrypted_password!
                 return {
                     user_login: item.login || '',
-                    encrypted_password: item.encrypted_pass || '' // ← ВОТ ИСПРАВЛЕНИЕ!
+                    encrypted_password: item.encrypted_pass || ''
                 };
             });
         } catch (err) {
@@ -428,6 +485,10 @@ const ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsI
 
     async function saveCredentials(login, password) {
         try {
+            // Валидация входных данных
+            const sanitizedLogin = sanitizeLogin(login);
+            const sanitizedPassword = sanitizePassword(password);
+
             const { user_id } = await chrome.storage.local.get('user_id');
             if (!user_id) {
                 console.error('Cannot save credentials: User ID not available.');
@@ -444,8 +505,8 @@ const ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsI
                 body: JSON.stringify({
                     p_user_id: user_id,
                     p_name_service: getServiceDomain(),
-                    p_user_login: login,
-                    p_encrypted_password: password
+                    p_user_login: sanitizedLogin,
+                    p_encrypted_password: sanitizedPassword
                 })
             });
 
@@ -468,7 +529,7 @@ const ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsI
             return true;
         } catch (error) {
             console.error('Save error:', error);
-            alert('Ошибка сохранения: Не удалось отправить данные. Проверьте консоль.');
+            alert(`Ошибка сохранения: ${error.message}`);
             return false;
         }
     }
@@ -484,9 +545,9 @@ const ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsI
         modal.id = 'save-modal';
         modal.innerHTML = `
             <h3>Сохранить пароль для ${getServiceDomain()}?</h3>
-            <input id="modal-login" class="input" placeholder="Логин" type="text" value="${initialLogin}" />
+            <input id="modal-login" class="input" placeholder="Логин" type="text" value="${initialLogin}" maxlength="100" />
             <div class="password-wrapper" style="margin-top: 10px;">
-                <input id="modal-password" class="input" placeholder="Пароль" type="password" value="${initialPassword}" />
+                <input id="modal-password" class="input" placeholder="Пароль" type="password" value="${initialPassword}" maxlength="500" />
                 <button id="modal-toggle-password" class="toggle-password-btn" title="Показать/скрыть пароль">👁️</button>
             </div>
             <div class="modal-actions">
@@ -508,18 +569,21 @@ const ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsI
         });
 
         modal.querySelector('#modal-save').addEventListener('click', async () => {
-            const login = modal.querySelector('#modal-login').value.trim();
-            const password = modal.querySelector('#modal-password').value.trim();
+            const login = modal.querySelector('#modal-login').value;
+            const password = modal.querySelector('#modal-password').value;
 
-            if (!login || !password) {
-                alert('Пожалуйста, заполните оба поля');
-                return;
-            }
+            try {
+                if (!login || !password) {
+                    throw new Error('Пожалуйста, заполните оба поля');
+                }
 
-            if (await saveCredentials(login, password)) {
-                alert('Данные успешно сохранены!');
-                modal.remove();
-                loadAndRenderCredentials();
+                if (await saveCredentials(login, password)) {
+                    alert('Данные успешно сохранены!');
+                    modal.remove();
+                    loadAndRenderCredentials();
+                }
+            } catch (error) {
+                alert(`Ошибка: ${error.message}`);
             }
         });
 
